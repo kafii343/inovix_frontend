@@ -12,65 +12,100 @@ import slotRoutes from './routes/slotRoutes';
 import orderRoutes from './routes/orderRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 
+// =======================
+// ENV CONFIG
+// =======================
 dotenv.config();
 
 const app: Application = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// Security middleware
+// =======================
+// MIDDLEWARE
+// =======================
 app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
 
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
-});
-app.use(limiter);
+app.use(
+  cors({
+    origin:
+      NODE_ENV === 'production'
+        ? process.env.FRONTEND_URL
+        : 'http://localhost:3000',
+    credentials: true,
+  })
+);
 
-// Body parsing middleware
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
-// Routes
+// =======================
+// ROUTES
+// =======================
 app.use('/api/users', userRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/slots', slotRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 
-// Health check route
-app.get('/api/health', (req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', message: 'Server is running' });
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: 'OK',
+    environment: NODE_ENV,
+  });
 });
 
-// Connect to MongoDB
+// =======================
+// DATABASE
+// =======================
+const getMongoURI = (): string => {
+  if (NODE_ENV === 'production') {
+    if (!process.env.MONGO_URL) {
+      throw new Error('❌ MONGO_URL is required in production');
+    }
+    return process.env.MONGO_URL;
+  }
+
+  return (
+    process.env.MONGODB_URI ||
+    'mongodb://localhost:27017/inovix'
+  );
+};
+
 const connectDB = async (): Promise<void> => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/inovix');
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    const uri = getMongoURI();
+    const conn = await mongoose.connect(uri);
+    console.log(`✅ MongoDB connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
+    console.error('❌ MongoDB connection failed:', error);
     process.exit(1);
   }
 };
 
-// Start server
+// =======================
+// SERVER START
+// =======================
 const startServer = async (): Promise<void> => {
   await connectDB();
+
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
   });
 };
 
-startServer().catch(error => {
-  console.error('Failed to start server:', error);
+startServer().catch((error) => {
+  console.error('❌ Server startup failed:', error);
   process.exit(1);
 });
